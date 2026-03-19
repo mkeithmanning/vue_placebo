@@ -1,0 +1,62 @@
+name: Upload IPA to TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct download URL for the .ipa file"
+        required: true
+        type: string
+
+jobs:
+  upload:
+    # macos-14 ships with Xcode 15 which still has xcrun altool.
+    # macos-latest (macOS 15 / Xcode 16) removed altool.
+    runs-on: macos-14
+    steps:
+      - name: Download IPA
+        run: |
+          curl -fL "${{ github.event.inputs.ipa_url }}" -o app.ipa
+          echo "Downloaded: $(du -sh app.ipa | cut -f1)"
+
+      - name: Verify secrets are set
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$ASC_KEY_ID" ]]; then
+            echo "ERROR: ASC_KEY_ID secret is not set in GitHub repo secrets"
+            exit 1
+          fi
+          if [[ -z "$ASC_ISSUER_ID" ]]; then
+            echo "ERROR: ASC_ISSUER_ID secret is not set in GitHub repo secrets"
+            exit 1
+          fi
+          if [[ -z "$ASC_PRIVATE_KEY" ]]; then
+            echo "ERROR: ASC_PRIVATE_KEY secret is not set in GitHub repo secrets"
+            exit 1
+          fi
+          echo "Key ID: $ASC_KEY_ID"
+          echo "Issuer ID: $ASC_ISSUER_ID"
+          echo "Private key length: ${#ASC_PRIVATE_KEY} chars"
+
+      - name: Upload to TestFlight via altool
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$ASC_PRIVATE_KEY" \
+            > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+          echo "Key file written to: ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          echo "Key file size: $(wc -c < ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8) bytes"
+
+          xcrun altool --upload-app \
+            --type ios \
+            --file app.ipa \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --verbose
